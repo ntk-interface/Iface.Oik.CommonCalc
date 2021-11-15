@@ -16,169 +16,85 @@ public class Worker : BackgroundService
 {
   private readonly IOikDataApi _api;
   private readonly string      _name;
-  private readonly string      _script;
+  private readonly ScriptTask  _scriptTask;
+  private readonly string      _scriptContent;
+
+  private int _period;
 
   private readonly Engine _engine;
-  private          int    _scriptTimeout = 2000;
 
-  private readonly List<TmGroup>  _groups   = new();
-  private readonly List<TmStatus> _statuses = new();
-  private readonly List<TmAnalog> _analogs  = new();
+  private readonly Dictionary<int, TmStatusGroup> _statusGroups = new();
+  private readonly Dictionary<int, TmAnalogGroup> _analogGroups = new();
 
 
-  public Worker(IOikDataApi api, string name, string script)
+  public Worker(IOikDataApi api, ScriptTask scriptTask, string scriptContent)
   {
-    _api    = api;
-    _name   = name;
-    _script = script;
+    _api           = api;
+    _scriptTask    = scriptTask;
+    _scriptContent = scriptContent;
 
-    InitGroups();
+    _name   = _scriptTask.ScriptName;
+    _period = _scriptTask.PeriodInSeconds * 1000;
 
     _engine = new Engine()
-              .SetValue("TmFlagUnreliable",      TmFlags.Unreliable)
-              .SetValue("TmFlagManuallyBlocked", TmFlags.ManuallyBlocked)
-              .SetValue("TmFlagManuallySet",     TmFlags.ManuallySet)
-              .SetValue("TmFlagLevelA",          TmFlags.LevelA)
-              .SetValue("TmFlagLevelB",          TmFlags.LevelB)
-              .SetValue("TmFlagLevelC",          TmFlags.LevelC)
-              .SetValue("TmFlagLevelD",          TmFlags.LevelD)
-              .SetValue("GetGroupArray",         new Func<int, int[]>(GetGroupArray))
-              .SetValue("GetTmStatus",           new Func<int, int>(GetTmStatus))
-              .SetValue("GetTmAnalog",           new Func<int, float>(GetTmAnalog))
-              .SetValue("IsTmStatusOn",          new Func<int, bool>(IsTmStatusOn))
-              .SetValue("IsTmStatusOff",         new Func<int, bool>(IsTmStatusOff))
-              .SetValue("SetTmStatus",           new Action<int, int>(SetTmStatus))
-              .SetValue("SetTmStatusOn",         new Action<int>(SetTmStatusOn))
-              .SetValue("SetTmStatusOff",        new Action<int>(SetTmStatusOff))
-              .SetValue("SetTmAnalog",           new Action<int, float>(SetTmAnalog))
-              .SetValue("RaiseTmStatusFlags",    new Action<int, TmFlags>(RaiseTmStatusFlags))
-              .SetValue("ClearTmStatusFlags",    new Action<int, TmFlags>(ClearTmStatusFlags))
-              .SetValue("RaiseTmAnalogFlags",    new Action<int, TmFlags>(RaiseTmAnalogFlags))
-              .SetValue("ClearTmAnalogFlags",    new Action<int, TmFlags>(ClearTmAnalogFlags))
-              .SetValue("LogDebug",              new Action<string>(LogDebug));
-
-    _engine.Execute(_script);
+              .SetValue("TmFlagUnreliable",        TmFlags.Unreliable)
+              .SetValue("TmFlagManuallyBlocked",   TmFlags.ManuallyBlocked)
+              .SetValue("TmFlagManuallySet",       TmFlags.ManuallySet)
+              .SetValue("TmFlagLevelA",            TmFlags.LevelA)
+              .SetValue("TmFlagLevelB",            TmFlags.LevelB)
+              .SetValue("TmFlagLevelC",            TmFlags.LevelC)
+              .SetValue("TmFlagLevelD",            TmFlags.LevelD)
+              .SetValue("InitTmStatusGroupInput",  new Func<int, int[][]>(InitTmStatusGroupInput))
+              .SetValue("InitTmStatusGroupOutput", new Func<int, int[][]>(InitTmStatusGroupOutput))
+              .SetValue("InitTmAnalogGroupInput",  new Func<int, int[][]>(InitTmAnalogGroupInput))
+              .SetValue("InitTmAnalogGroupOutput", new Func<int, int[][]>(InitTmAnalogGroupOutput))
+              .SetValue("GetTmStatus",             new Func<int[], int>(GetTmStatus))
+              .SetValue("GetTmAnalog",             new Func<int[], float>(GetTmAnalog))
+              .SetValue("GetTmAnalogRetro",        new Func<int[], long, long, int?, float[]>(GetTmAnalogRetro))
+              .SetValue("GetTmAnalogImpulseArchiveAverage",
+                        new Func<int[], long, long, int?, float[]>(GetTmAnalogImpulseArchiveAverage))
+              .SetValue("IsTmStatusOn",         new Func<int[], bool>(IsTmStatusOn))
+              .SetValue("IsTmStatusOff",        new Func<int[], bool>(IsTmStatusOff))
+              .SetValue("IsTmStatusFlagRaised", new Func<int[], TmFlags, bool>(IsTmStatusFlagRaised))
+              .SetValue("IsTmAnalogFlagRaised", new Func<int[], TmFlags, bool>(IsTmAnalogFlagRaised))
+              .SetValue("SetTmStatus",          new Action<int[], int>(SetTmStatus))
+              .SetValue("SetTmStatusOn",        new Action<int[]>(SetTmStatusOn))
+              .SetValue("SetTmStatusOff",       new Action<int[]>(SetTmStatusOff))
+              .SetValue("SetTmAnalog",          new Action<int[], float>(SetTmAnalog))
+              .SetValue("RaiseTmStatusFlags",   new Action<int[], TmFlags>(RaiseTmStatusFlags))
+              .SetValue("ClearTmStatusFlags",   new Action<int[], TmFlags>(ClearTmStatusFlags))
+              .SetValue("RaiseTmAnalogFlags",   new Action<int[], TmFlags>(RaiseTmAnalogFlags))
+              .SetValue("ClearTmAnalogFlags",   new Action<int[], TmFlags>(ClearTmAnalogFlags))
+              .SetValue("GetPeriod",            new Func<int>(GetPeriod))
+              .SetValue("OverridePeriod",       new Action<int>(OverridePeriod))
+              .SetValue("ThrowException",       new Action<string>(ThrowException))
+              .SetValue("LogError",             new Action<string>(LogError))
+              .SetValue("LogDebug",             new Action<string>(LogDebug));
   }
 
 
-  private void InitGroups()
+  public override Task StartAsync(CancellationToken cancellationToken)
   {
-    _groups.AddRange(new[]
+    try
     {
-      new TmGroup("DateTimeIsAllowed"),
-      new TmGroup("DateTime"),
-      new TmGroup("TsOn"),
-      new TmGroup("TsOff"),
-      new TmGroup("TsSwitch"),
-      new TmGroup("TsTrolley"),
-    });
-
-    AddGroupTmStatus(0, 24, 1, 1);
-
-    AddGroupTmAnalog(1, 24, 1, 1);
-    AddGroupTmAnalog(1, 24, 1, 2);
-    AddGroupTmAnalog(1, 24, 1, 3);
-    AddGroupTmAnalog(1, 24, 1, 4);
-    AddGroupTmAnalog(1, 24, 1, 5);
-    AddGroupTmAnalog(1, 24, 1, 6);
-    AddGroupTmAnalog(1, 24, 1, 7);
-
-    AddGroupTmStatus(2, 0, 1, 1);
-    AddGroupTmStatus(2, 0, 1, 3);
-    AddGroupTmStatus(2, 0, 1, 5);
-
-    AddGroupTmStatus(3, 0, 1, 2);
-    AddGroupTmStatus(3, 0, 1, 4);
-
-    AddGroupTmStatus(4, 22, 1,  1);
-    AddGroupTmStatus(4, 22, 13, 1);
-    AddGroupTmStatus(4, 22, 14, 1);
-
-    AddGroupTmStatus(5, 22, 1,  11);
-    AddGroupTmStatus(5, 22, 13, 11);
-    AddGroupTmStatus(5, 22, 14, 11);
-  }
-
-
-  private void AddGroupTmStatus(int group, int ch, int rtu, int point)
-  {
-    var statusIdx = InitTmStatus(ch, rtu, point);
-    _groups[group].TagsIndexes.Add(statusIdx);
-  }
-
-
-  private int InitTmStatus(int ch, int rtu, int point)
-  {
-    var existingTmStatusIndex = FindTmStatus(ch, rtu, point);
-    if (existingTmStatusIndex >= 0)
-    {
-      return existingTmStatusIndex;
+      _engine.Execute(_scriptContent);
+      return base.StartAsync(cancellationToken);
     }
-    var tmStatus = new TmStatus(ch, rtu, point);
-    _statuses.Add(tmStatus);
-    return _statuses.Count - 1;
-  }
-
-
-  private int FindTmStatus(int ch, int rtu, int point)
-  {
-    var index = 0;
-    foreach (var tmStatus in _statuses)
+    catch (Exception ex)
     {
-      if (tmStatus.TmAddr.Equals(ch, rtu, point))
-      {
-        return index;
-      }
-      index++;
+      Tms.PrintError($"Ошибка при инициализации скрипта \"{_name}\": {ex.Message}");
+      return Task.CompletedTask;
     }
-    return -1;
-  }
-
-
-  private void AddGroupTmAnalog(int group, int ch, int rtu, int point)
-  {
-    var statusIdx = InitTmAnalog(ch, rtu, point);
-    _groups[group].TagsIndexes.Add(statusIdx);
-  }
-
-
-  private int InitTmAnalog(int ch, int rtu, int point)
-  {
-    var existingTmAnalogIndex = FindTmAnalog(ch, rtu, point);
-    if (existingTmAnalogIndex >= 0)
-    {
-      return existingTmAnalogIndex;
-    }
-    var tmAnalog = new TmAnalog(ch, rtu, point);
-    _analogs.Add(tmAnalog);
-    return _analogs.Count - 1;
-  }
-
-
-  private int FindTmAnalog(int ch, int rtu, int point)
-  {
-    var index = 0;
-    foreach (var tmAnalog in _analogs)
-    {
-      if (tmAnalog.TmAddr.Equals(ch, rtu, point))
-      {
-        return index;
-      }
-      index++;
-    }
-    return -1;
   }
 
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken)
   {
-    await Task.Delay(500, stoppingToken); // такое асинхронное ожидание даёт хосту возможность завершить инициализацию
-
     while (!stoppingToken.IsCancellationRequested)
     {
+      var sw = Stopwatch.StartNew();
       try
       {
-        var sw = Stopwatch.StartNew();
         await DoWork();
         Tms.PrintDebug($"Скрипт \"{_name}\" рассчитан за {sw.ElapsedMilliseconds} мс");
       }
@@ -186,159 +102,345 @@ public class Worker : BackgroundService
       {
         Tms.PrintDebug($"Ошибка при расчете скрипта \"{_name}\": {ex.Message}");
       }
-      await Task.Delay(_scriptTimeout, stoppingToken);
+
+      await Task.Delay(_period, stoppingToken);
     }
   }
 
 
   private async Task DoWork()
   {
-    await _api.UpdateStatuses(_statuses);
-    await _api.UpdateAnalogs(_analogs);
+    foreach (var group in _statusGroups.Values.Where(g => g.IsUpdating))
+    {
+      await _api.UpdateStatuses(group.Statuses);
+    }
+    foreach (var group in _analogGroups.Values.Where(g => g.IsUpdating))
+    {
+      await _api.UpdateAnalogs(group.Analogs);
+    }
 
     _engine.Invoke("DoWork");
   }
 
 
-  private int[] GetGroupArray(int idx)
+  private int[][] InitTmStatusGroup(int groupIdx, bool isUpdating)
   {
-    return _groups[idx].TagsIndexes.ToArray();
+    var groupName = _scriptTask.GroupNames.ElementAtOrDefault(groupIdx);
+    if (string.IsNullOrEmpty(groupName))
+    {
+      throw new Exception($"Не найдена требуемая группа сигналов в конфигурации: {groupIdx}");
+    }
+    var tmStatuses = new List<TmStatus>();
+    if (groupName.StartsWith("@"))
+    {
+      isUpdating = false;
+      foreach (var statusString in groupName[1..].Split(';'))
+      {
+        if (!short.TryParse(statusString, NumberStyles.Any, CultureInfo.InvariantCulture, out var status))
+        {
+          throw new Exception($"Недопустимое значение в группе: {statusString}");
+        }
+        tmStatuses.Add(new TmStatus(254, 255, 65535) { Status = status, IsInit = true });
+      }
+    }
+    else if (groupName.StartsWith("#TC"))
+    {
+      foreach (var tmAddrString in groupName.Split(';'))
+      {
+        if (!TmAddr.TryParse(tmAddrString, out var tmAddr, TmType.Status))
+        {
+          throw new Exception($"Недопустимый адрес сигнала: {tmAddrString}");
+        }
+        tmStatuses.Add(new TmStatus(tmAddr));
+      }
+    }
+    else
+    {
+      var groupStatuses = _api.GetTagsByGroup(TmType.Status, groupName)
+                              .GetAwaiter()
+                              .GetResult()
+                              ?.Cast<TmStatus>()
+                              .ToList();
+      if (groupStatuses == null)
+      {
+        throw new Exception($"Ошибка загрузки данных группы: \"{groupName}\"");
+      }
+      tmStatuses.AddRange(groupStatuses);
+    }
+    _statusGroups.Add(groupIdx, new TmStatusGroup(groupName, isUpdating, tmStatuses));
+
+    return tmStatuses.Select((_, idx) => new[] { groupIdx, idx }).ToArray();
   }
 
 
-  private bool IsTmStatusOn(int idx)
+  private int[][] InitTmStatusGroupInput(int idx)
   {
-    return GetTmStatus(idx) > 0;
+    return InitTmStatusGroup(idx, isUpdating: true);
   }
 
 
-  private bool IsTmStatusOff(int idx)
+  private int[][] InitTmStatusGroupOutput(int idx)
   {
-    return GetTmStatus(idx) == 0;
+    return InitTmStatusGroup(idx, isUpdating: false);
   }
 
 
-  private int GetTmStatus(int idx)
+  private int[][] InitTmAnalogGroup(int groupIdx, bool isUpdating)
   {
-    var tmStatus = _statuses.ElementAtOrDefault(idx);
+    var groupName = _scriptTask.GroupNames.ElementAtOrDefault(groupIdx);
+    if (string.IsNullOrEmpty(groupName))
+    {
+      throw new Exception($"Не найдена требуемая группа измерений в конфигурации: {groupIdx}");
+    }
+
+    var tmAnalogs = new List<TmAnalog>();
+    if (groupName.StartsWith("@"))
+    {
+      isUpdating = false;
+      foreach (var valueString in groupName[1..].Split(';'))
+      {
+        if (!float.TryParse(valueString, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+        {
+          throw new Exception($"Недопустимое значение в группе: {valueString}");
+        }
+        tmAnalogs.Add(new TmAnalog(254, 255, 65535) { Value = value, IsInit = false });
+      }
+    }
+    else if (groupName.StartsWith("#TT"))
+    {
+      foreach (var tmAddrString in groupName.Split(';'))
+      {
+        if (!TmAddr.TryParse(tmAddrString, out var tmAddr, TmType.Analog))
+        {
+          throw new Exception($"Недопустимый адрес измерения в группе: {tmAddrString}");
+        }
+        tmAnalogs.Add(new TmAnalog(tmAddr));
+      }
+    }
+    else
+    {
+      var groupAnalogs = _api.GetTagsByGroup(TmType.Analog, groupName)
+                             .GetAwaiter()
+                             .GetResult()
+                             ?.Cast<TmAnalog>()
+                             .ToList();
+      if (groupAnalogs == null)
+      {
+        throw new Exception($"Ошибка загрузки данных группы: \"{groupName}\"");
+      }
+      tmAnalogs.AddRange(groupAnalogs);
+    }
+    _analogGroups.Add(groupIdx, new TmAnalogGroup(groupName, isUpdating, tmAnalogs));
+
+    return tmAnalogs.Select((_, idx) => new[] { groupIdx, idx }).ToArray();
+  }
+
+
+  private int[][] InitTmAnalogGroupInput(int idx)
+  {
+    return InitTmAnalogGroup(idx, isUpdating: true);
+  }
+
+
+  private int[][] InitTmAnalogGroupOutput(int idx)
+  {
+    return InitTmAnalogGroup(idx, isUpdating: false);
+  }
+
+
+  private TmStatus FindTmStatus(int[] id)
+  {
+    if (id == null || id.Length != 2)
+    {
+      throw new Exception("Некорретный идентификатор сигнала");
+    }
+    if (!_statusGroups.TryGetValue(id[0], out var group))
+    {
+      throw new Exception("Несуществующий номер группы");
+    }
+    var tmStatus = group.Statuses.ElementAtOrDefault(id[1]);
     if (tmStatus == null)
     {
-      return -1;
+      throw new Exception("Несуществующий номер сигнала");
     }
-    return tmStatus.Status;
+    return tmStatus;
   }
 
 
-  private float GetTmAnalog(int idx)
+  private TmAnalog FindTmAnalog(int[] id)
   {
-    var tmAnalog = _analogs.ElementAtOrDefault(idx);
+    if (id == null || id.Length != 2)
+    {
+      throw new Exception("Некорретный идентификатор измерения");
+    }
+    if (!_analogGroups.TryGetValue(id[0], out var group))
+    {
+      throw new Exception("Несуществующий номер группы");
+    }
+    var tmAnalog = group.Analogs.ElementAtOrDefault(id[1]);
     if (tmAnalog == null)
     {
-      return -1;
+      throw new Exception("Несуществующий номер измерения");
     }
-    return tmAnalog.Value;
+    return tmAnalog;
   }
 
 
-  private void SetTmStatus(int idx, int status)
+  private bool IsTmStatusOn(int[] id)
   {
-    var tmStatus = _statuses.ElementAtOrDefault(idx);
-    if (tmStatus == null)
+    return GetTmStatus(id) > 0;
+  }
+
+
+  private bool IsTmStatusOff(int[] id)
+  {
+    return GetTmStatus(id) == 0;
+  }
+
+
+  private int GetTmStatus(int[] id)
+  {
+    return FindTmStatus(id).Status;
+  }
+
+
+  private bool IsTmStatusFlagRaised(int[] id, TmFlags flag)
+  {
+    return FindTmStatus(id).HasFlag(flag);
+  }
+
+
+  private bool IsTmAnalogFlagRaised(int[] id, TmFlags flag)
+  {
+    return FindTmAnalog(id).HasFlag(flag);
+  }
+
+
+  private float GetTmAnalog(int[] id)
+  {
+    return FindTmAnalog(id).Value;
+  }
+
+
+  private float[] GetTmAnalogRetro(int[] id, long utcStartTime, long utcEndTime, int? step = null)
+  {
+    var tmAnalog = FindTmAnalog(id);
+
+    if (!tmAnalog.IsInit)
     {
-      return;
+      LogDebug("Запрашивается ретроспектива для неинициализированного измерения");
+      return Array.Empty<float>();
     }
-    var (ch, rtu, point) = tmStatus.TmAddr.GetTuple();
+
+    var retro = _api.GetAnalogRetro(tmAnalog, new TmAnalogRetroFilter(utcStartTime, utcEndTime, step))
+                    .GetAwaiter()
+                    .GetResult();
+
+    if (retro == null)
+    {
+      throw new Exception("Ошибка получения ретроспективы измерения");
+    }
+    return retro.Select(r => r.Value).ToArray();
+  }
+
+
+  private float[] GetTmAnalogImpulseArchiveAverage(int[] id, long utcStartTime, long utcEndTime, int? step = null)
+  {
+    var tmAnalog = FindTmAnalog(id);
+
+    if (!tmAnalog.IsInit)
+    {
+      LogDebug("Запрашивается импульс-архив для неинициализированного измерения");
+      return Array.Empty<float>();
+    }
+
+    var retro = _api.GetImpulseArchiveAverage(tmAnalog, new TmAnalogRetroFilter(utcStartTime, utcEndTime, step))
+                    .GetAwaiter()
+                    .GetResult();
+
+    if (retro == null)
+    {
+      throw new Exception("Ошибка получения ретроспективы измерения");
+    }
+    return retro.Select(r => r.Value).ToArray();
+  }
+
+
+  private void SetTmStatus(int[] id, int status)
+  {
+    var (ch, rtu, point) = FindTmStatus(id).TmAddr.GetTuple();
     _api.SetStatus(ch, rtu, point, status);
   }
 
 
-  private void SetTmStatusOn(int idx)
+  private void SetTmStatusOn(int[] id)
   {
-    SetTmStatus(idx, 1);
+    SetTmStatus(id, 1);
   }
 
 
-  private void SetTmStatusOff(int idx)
+  private void SetTmStatusOff(int[] id)
   {
-    SetTmStatus(idx, 0);
+    SetTmStatus(id, 0);
   }
 
 
-  private void SetTmAnalog(int idx, float value)
+  private void SetTmAnalog(int[] id, float value)
   {
-    var tmAnalog = _analogs.ElementAtOrDefault(idx);
-    if (tmAnalog == null)
-    {
-      return;
-    }
-    var (ch, rtu, point) = tmAnalog.TmAddr.GetTuple();
+    var (ch, rtu, point) = FindTmAnalog(id).TmAddr.GetTuple();
     _api.SetAnalog(ch, rtu, point, value);
   }
 
 
-  private void RaiseTmStatusFlags(int idx, TmFlags flags)
+  private void RaiseTmStatusFlags(int[] id, TmFlags flags)
   {
-    var tmStatus = _statuses.ElementAtOrDefault(idx);
-    if (tmStatus == null)
-    {
-      return;
-    }
-    var (ch, rtu, point) = tmStatus.TmAddr.GetTuple();
-    _api.SetTagFlags(new TmStatus(ch, rtu, point), flags);
+    var (ch, rtu, point) = FindTmStatus(id).TmAddr.GetTuple();
+    _api.SetTagFlagsExplicitly(new TmStatus(ch, rtu, point), flags);
   }
 
 
-  private void ClearTmStatusFlags(int idx, TmFlags flags)
+  private void ClearTmStatusFlags(int[] id, TmFlags flags)
   {
-    var tmStatus = _statuses.ElementAtOrDefault(idx);
-    if (tmStatus == null)
-    {
-      return;
-    }
-    var (ch, rtu, point) = tmStatus.TmAddr.GetTuple();
-    _api.ClearTagFlags(new TmStatus(ch, rtu, point), flags);
+    var (ch, rtu, point) = FindTmStatus(id).TmAddr.GetTuple();
+    _api.ClearTagFlagsExplicitly(new TmStatus(ch, rtu, point), flags);
   }
 
 
-  private void RaiseTmAnalogFlags(int idx, TmFlags flags)
+  private void RaiseTmAnalogFlags(int[] id, TmFlags flags)
   {
-    var tmAnalog = _analogs.ElementAtOrDefault(idx);
-    if (tmAnalog == null)
-    {
-      return;
-    }
-    var (ch, rtu, point) = tmAnalog.TmAddr.GetTuple();
-    _api.SetTagFlags(new TmAnalog(ch, rtu, point), flags);
+    var (ch, rtu, point) = FindTmAnalog(id).TmAddr.GetTuple();
+    _api.SetTagFlagsExplicitly(new TmAnalog(ch, rtu, point), flags);
   }
 
 
-  private void ClearTmAnalogFlags(int idx, TmFlags flags)
+  private void ClearTmAnalogFlags(int[] id, TmFlags flags)
   {
-    var tmAnalog = _analogs.ElementAtOrDefault(idx);
-    if (tmAnalog == null)
-    {
-      return;
-    }
-    var (ch, rtu, point) = tmAnalog.TmAddr.GetTuple();
-    _api.ClearTagFlags(new TmAnalog(ch, rtu, point), flags);
+    var (ch, rtu, point) = FindTmAnalog(id).TmAddr.GetTuple();
+    _api.ClearTagFlagsExplicitly(new TmAnalog(ch, rtu, point), flags);
   }
 
 
-  private string GetExpressionResult(string expression)
+  private int GetPeriod()
   {
-    return _api.GetExpressionResult(expression).GetAwaiter().GetResult();
+    return _period;
   }
 
 
-  private bool TryGetExpressionResult(string expression, out float value)
+  private void OverridePeriod(int period)
   {
-    var expressionResult = GetExpressionResult(expression);
-    if (!float.TryParse(expressionResult, NumberStyles.Any, CultureInfo.InvariantCulture, out value))
-    {
-      LogDebug(expressionResult);
-      return false;
-    }
-    return true;
+    _period = period;
+  }
+
+
+  private void ThrowException(string message)
+  {
+    throw new Exception(message);
+  }
+
+
+  private void LogError(string message)
+  {
+    Tms.PrintError($"Ошибка скрипта \"{_name}\": {message}");
   }
 
 
@@ -348,16 +450,34 @@ public class Worker : BackgroundService
   }
 
 
-  private class TmGroup
+  private class TmStatusGroup
   {
-    public string Name { get; }
+    public string         Name       { get; }
+    public bool           IsUpdating { get; }
+    public List<TmStatus> Statuses   { get; }
 
-    public List<int> TagsIndexes { get; } = new();
 
-
-    public TmGroup(string name)
+    public TmStatusGroup(string name, bool isUpdating, List<TmStatus> statuses)
     {
-      Name = name;
+      Name       = name;
+      IsUpdating = isUpdating;
+      Statuses   = new List<TmStatus>(statuses ?? new List<TmStatus>());
+    }
+  }
+
+
+  private class TmAnalogGroup
+  {
+    public string         Name       { get; }
+    public bool           IsUpdating { get; }
+    public List<TmAnalog> Analogs    { get; }
+
+
+    public TmAnalogGroup(string name, bool isUpdating, List<TmAnalog> analogs)
+    {
+      Name       = name;
+      IsUpdating = isUpdating;
+      Analogs    = new List<TmAnalog>(analogs ?? new List<TmAnalog>());
     }
   }
 }

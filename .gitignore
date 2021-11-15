@@ -317,3 +317,5 @@ ASALocalRun/
 # MSBuild Binary and Structured Log
 *.binlog
 
+dist/
+dist_linux/

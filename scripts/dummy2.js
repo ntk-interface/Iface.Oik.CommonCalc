@@ -1,6 +1,6 @@
-const tsOn = GetGroupArray(2);
+const tsOn = InitTmStatusGroupOutput(0);
 
-const tsOff = GetGroupArray(3);
+const tsOff = InitTmStatusGroupOutput(1);
 
 function DoWork()
 {

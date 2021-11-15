@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Iface.Oik.Tm.Helpers;
@@ -15,7 +14,7 @@ public class ServerService : CommonServerService, IHostedService
 
 public class TmStartup : BackgroundService
 {
-  private const string ApplicationName = "CommonCalc";
+  private const string ApplicationName = "Iface.Oik.CommonCalc";
   private const string TraceName       = "CommonCalc";
   private const string TraceComment    = "<Iface.Oik.CommonCalc>";
 
@@ -37,7 +36,7 @@ public class TmStartup : BackgroundService
 
   public static void Connect()
   {
-    var commandLineArgs = Environment.GetCommandLineArgs();
+    var commandLineConfig = Tms.ParseTmCommandLineArguments();
 
     (_tmCid, _userInfo, _serverFeatures, _stopEventHandle) = Tms.InitializeAsTaskWithoutSql(
       new TmOikTaskOptions
@@ -48,13 +47,25 @@ public class TmStartup : BackgroundService
       new TmInitializeOptions
       {
         ApplicationName = ApplicationName,
-        TmServer        = commandLineArgs.ElementAtOrDefault(1) ?? "TMS",
-        Host            = commandLineArgs.ElementAtOrDefault(2) ?? ".",
-        User            = commandLineArgs.ElementAtOrDefault(3) ?? "",
-        Password        = commandLineArgs.ElementAtOrDefault(4) ?? "",
+        TmServer        = commandLineConfig.TmServer,
+        Host            = commandLineConfig.Host,
+        User            = commandLineConfig.User,
+        Password        = commandLineConfig.Password,
       });
 
     Tms.PrintMessage("Соединение с сервером установлено");
+
+    if (!string.IsNullOrEmpty(commandLineConfig.ConfigPath))
+    {
+      Loader.ConfigPath = commandLineConfig.ConfigPath;
+    }
+    else if (commandLineConfig.ConfigIndex != 0)
+    {
+      if (Tms.TryDownloadTaskConfiguration(_tmCid, ApplicationName, commandLineConfig.ConfigIndex, out var path))
+      {
+        Loader.ConfigPath = path;
+      }
+    }
   }
 
 
