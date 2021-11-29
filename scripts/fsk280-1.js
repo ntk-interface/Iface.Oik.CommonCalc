@@ -27,6 +27,7 @@ const inputLength = inputI.length;
 const Ii  = [];
 const Pi  = [];
 const KFi = [];
+const errors = [];
 for (let i = 0; i < inputLength; i++)
 {
   Ii.push([]);
@@ -42,10 +43,11 @@ function DoWork()
     Ii[i].push(GetTmAnalog(inputI[i]));
     Pi[i].push(GetTmAnalog(inputP[i]));
     KFi[i].push(GetTmAnalog(inputKF[i]));
+    errors.push(IsErrorFlagRaised());
   }
   if (Ii[0].length < pointsToKeep) // если точек недостаточно для расчета, продолжаем копить
   {
-    LogDebug("Продолжаю накалпивать значения, пропуск расчета...");
+    LogDebug('Продолжаю накалпивать значения, пропуск расчета...');
     return;
   }
 
@@ -74,6 +76,7 @@ function DoWork()
     Ii[i].shift();
     Pi[i].shift();
     KFi[i].shift();
+    errors.shift();
 
     SIi[i]  = getArrayAverage(Ii[i]);
     SPi[i]  = getArrayAverage(Pi[i]);
@@ -81,6 +84,14 @@ function DoWork()
 
     SP += Math.abs(SPi[i]);
     NFP += SPi[i];
+  }
+  
+  // если найдено хоть одно недостоверное значение, выставляем флаг недостовености и выходим
+  if (errors.some(e => e === true))
+  {
+    LogDebug('Найдено недостоверное значение, невозможно выполнить расчет');
+    RaiseTmAnalogFlags(output[0], TmFlagUnreliable);
+    return;
   }
 
   // дальнейший расчет
