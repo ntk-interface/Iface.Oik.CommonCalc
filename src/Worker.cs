@@ -21,6 +21,8 @@ public class Worker : BackgroundService
 
   private int _period;
 
+  private bool _isErrorFlagRaised;
+
   private readonly Engine _engine;
 
   private readonly Dictionary<int, TmStatusGroup> _statusGroups = new();
@@ -68,6 +70,8 @@ public class Worker : BackgroundService
               .SetValue("GetPeriod",            new Func<int>(GetPeriod))
               .SetValue("OverridePeriod",       new Action<int>(OverridePeriod))
               .SetValue("ThrowException",       new Action<string>(ThrowException))
+              .SetValue("IsErrorFlagRaised",    new Func<bool>(IsErrorFlagRaised))
+              .SetValue("ClearErrorFlag",       new Action(ClearErrorFlag))
               .SetValue("LogError",             new Action<string>(LogError))
               .SetValue("LogDebug",             new Action<string>(LogDebug));
   }
@@ -110,13 +114,25 @@ public class Worker : BackgroundService
 
   private async Task DoWork()
   {
+    _isErrorFlagRaised = false;
+    
     foreach (var group in _statusGroups.Values.Where(g => g.IsUpdating))
     {
       await _api.UpdateStatuses(group.Statuses);
+
+      if (group.Statuses.Any(s => s.IsUnreliable || s.IsInvalid || s.IsS2Failure))
+      {
+        _isErrorFlagRaised = true;
+      }
     }
     foreach (var group in _analogGroups.Values.Where(g => g.IsUpdating))
     {
       await _api.UpdateAnalogs(group.Analogs);
+
+      if (group.Analogs.Any(a => a.IsUnreliable || a.IsInvalid))
+      {
+        _isErrorFlagRaised = true;
+      }
     }
 
     _engine.Invoke("DoWork");
@@ -340,6 +356,10 @@ public class Worker : BackgroundService
     {
       throw new Exception("Ошибка получения ретроспективы измерения");
     }
+    if (retro.Any(r => r.IsUnreliable))
+    {
+      _isErrorFlagRaised = true;
+    }
     return retro.Select(r => r.Value).ToArray();
   }
 
@@ -361,6 +381,10 @@ public class Worker : BackgroundService
     if (retro == null)
     {
       throw new Exception("Ошибка получения ретроспективы измерения");
+    }
+    if (retro.Any(r => r.IsUnreliable))
+    {
+      _isErrorFlagRaised = true;
     }
     return retro.Select(r => r.Value).ToArray();
   }
@@ -429,6 +453,18 @@ public class Worker : BackgroundService
   private void OverridePeriod(int period)
   {
     _period = period;
+  }
+
+
+  private void ClearErrorFlag()
+  {
+    _isErrorFlagRaised = false;
+  }
+
+
+  private bool IsErrorFlagRaised()
+  {
+    return _isErrorFlagRaised;
   }
 
 
