@@ -42,6 +42,7 @@ public class Worker : BackgroundService
               .SetValue("TmFlagUnreliable",        TmFlags.Unreliable)
               .SetValue("TmFlagManuallyBlocked",   TmFlags.ManuallyBlocked)
               .SetValue("TmFlagManuallySet",       TmFlags.ManuallySet)
+              .SetValue("TmFlagAbnormal",          TmFlags.Abnormal)
               .SetValue("TmFlagLevelA",            TmFlags.LevelA)
               .SetValue("TmFlagLevelB",            TmFlags.LevelB)
               .SetValue("TmFlagLevelC",            TmFlags.LevelC)
@@ -115,7 +116,7 @@ public class Worker : BackgroundService
   private async Task DoWork()
   {
     _isErrorFlagRaised = false;
-    
+
     foreach (var group in _statusGroups.Values.Where(g => g.IsUpdating))
     {
       await _api.UpdateStatuses(group.Statuses);
