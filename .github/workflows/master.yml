@@ -1,0 +1,67 @@
+name: master
+
+on: 
+  push:
+    branches:
+      - master
+    
+env:
+   APP_NAME: Iface.Oik.CommonCalc
+   DEPLOY_PATH: C:\Artifacts\Iface.Oik.CommonCalc
+ 
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_windows: ${{steps.artifacts.outputs.artifact_windows}}
+      artifact_linux: ${{steps.artifacts.outputs.artifact_linux}}
+    steps:
+    - uses: actions/checkout@v2
+        
+    - name: Build
+      run: dotnet build -c Release
+      
+    - name: Test
+      run: dotnet test
+
+    - name: Prepare version number
+      id: version
+      run: echo "::set-output name=id::$(date +'%y').${{github.run_number}}"
+
+    - name: Prepare artifacts names
+      id: artifacts
+      run: |
+        echo "::set-output name=artifact_windows::${{env.APP_NAME}}.${{steps.version.outputs.id}}.zip"
+        echo "::set-output name=artifact_linux::${{env.APP_NAME}}.${{steps.version.outputs.id}}.tar.gz"
+
+    - name: Publish
+      run: |
+        dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true /p:CopyOutputSymbolsToPublishDirectory=false -o dist_windows
+        dotnet publish -c Release -r linux-x64 --self-contained false /p:PublishSingleFile=true /p:CopyOutputSymbolsToPublishDirectory=false -o dist_linux
+        
+    - name: Make archives
+      run: |
+        7z a ${{steps.artifacts.outputs.artifact_windows}} ./dist_windows/*
+        tar -czf ${{steps.artifacts.outputs.artifact_linux}} -C dist_linux .
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: Artifacts
+        path: |
+          ${{steps.artifacts.outputs.artifact_windows}}
+          ${{steps.artifacts.outputs.artifact_linux}}
+          
+  deploy:
+    needs: build
+    runs-on: [self-hosted, windows]
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: Artifacts
+
+      - name: Deploy
+        run: |
+          cp -r ${{needs.build.outputs.artifact_windows}} ${{env.DEPLOY_PATH}}
+          cp -r ${{needs.build.outputs.artifact_linux}} ${{env.DEPLOY_PATH}}
