@@ -72,5 +72,5 @@ jobs:
 
       - name: Extract
         run: |
-          7z x ${{env.DEPLOY_PATH}}/${{needs.build.outputs.artifact_windows}} -aoa -o ${{env.DEPLOY_PATH}}/Latest
-          7z ${{env.DEPLOY_PATH}}/${{needs.build.outputs.artifact_linux}} -so | 7z x -aoa -si -ttar -o ${{env.DEPLOY_PATH}}/Latest
+          7z x "${{env.DEPLOY_PATH}}/${{needs.build.outputs.artifact_windows}}" -aoa "-o${{env.DEPLOY_PATH}}/Latest"
+          7z x "${{env.DEPLOY_PATH}}/${{needs.build.outputs.artifact_linux}}" -so | 7z x -aoa -si -ttar "-o${{env.DEPLOY_PATH}}/Latest"
