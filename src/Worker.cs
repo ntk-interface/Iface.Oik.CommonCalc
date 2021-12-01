@@ -39,21 +39,25 @@ public class Worker : BackgroundService
     _period = _scriptTask.PeriodInSeconds * 1000;
 
     _engine = new Engine()
-              .SetValue("TmFlagUnreliable",        TmFlags.Unreliable)
-              .SetValue("TmFlagManuallyBlocked",   TmFlags.ManuallyBlocked)
-              .SetValue("TmFlagManuallySet",       TmFlags.ManuallySet)
-              .SetValue("TmFlagAbnormal",          TmFlags.Abnormal)
-              .SetValue("TmFlagLevelA",            TmFlags.LevelA)
-              .SetValue("TmFlagLevelB",            TmFlags.LevelB)
-              .SetValue("TmFlagLevelC",            TmFlags.LevelC)
-              .SetValue("TmFlagLevelD",            TmFlags.LevelD)
-              .SetValue("InitTmStatusGroupInput",  new Func<int, int[][]>(InitTmStatusGroupInput))
-              .SetValue("InitTmStatusGroupOutput", new Func<int, int[][]>(InitTmStatusGroupOutput))
-              .SetValue("InitTmAnalogGroupInput",  new Func<int, int[][]>(InitTmAnalogGroupInput))
-              .SetValue("InitTmAnalogGroupOutput", new Func<int, int[][]>(InitTmAnalogGroupOutput))
-              .SetValue("GetTmStatus",             new Func<int[], int>(GetTmStatus))
-              .SetValue("GetTmAnalog",             new Func<int[], float>(GetTmAnalog))
-              .SetValue("GetTmAnalogRetro",        new Func<int[], long, long, int?, float[]>(GetTmAnalogRetro))
+              .SetValue("TmFlagUnreliable",           TmFlags.Unreliable)
+              .SetValue("TmFlagManuallyBlocked",      TmFlags.ManuallyBlocked)
+              .SetValue("TmFlagManuallySet",          TmFlags.ManuallySet)
+              .SetValue("TmFlagAbnormal",             TmFlags.Abnormal)
+              .SetValue("TmFlagLevelA",               TmFlags.LevelA)
+              .SetValue("TmFlagLevelB",               TmFlags.LevelB)
+              .SetValue("TmFlagLevelC",               TmFlags.LevelC)
+              .SetValue("TmFlagLevelD",               TmFlags.LevelD)
+              .SetValue("InitTmStatusGroupInput",     new Func<int, int[][]>(InitTmStatusGroupInput))
+              .SetValue("TryInitTmStatusGroupInput",  new Func<int, int[][]>(TryInitTmStatusGroupInput))
+              .SetValue("InitTmStatusGroupOutput",    new Func<int, int[][]>(InitTmStatusGroupOutput))
+              .SetValue("TryInitTmStatusGroupOutput", new Func<int, int[][]>(TryInitTmStatusGroupOutput))
+              .SetValue("InitTmAnalogGroupInput",     new Func<int, int[][]>(InitTmAnalogGroupInput))
+              .SetValue("TryInitTmAnalogGroupInput",  new Func<int, int[][]>(TryInitTmAnalogGroupInput))
+              .SetValue("InitTmAnalogGroupOutput",    new Func<int, int[][]>(InitTmAnalogGroupOutput))
+              .SetValue("TryInitTmAnalogGroupOutput", new Func<int, int[][]>(TryInitTmAnalogGroupOutput))
+              .SetValue("GetTmStatus",                new Func<int[], int>(GetTmStatus))
+              .SetValue("GetTmAnalog",                new Func<int[], float>(GetTmAnalog))
+              .SetValue("GetTmAnalogRetro",           new Func<int[], long, long, int?, float[]>(GetTmAnalogRetro))
               .SetValue("GetTmAnalogImpulseArchiveAverage",
                         new Func<int[], long, long, int?, float[]>(GetTmAnalogImpulseArchiveAverage))
               .SetValue("IsTmStatusOn",         new Func<int[], bool>(IsTmStatusOn))
@@ -140,12 +144,19 @@ public class Worker : BackgroundService
   }
 
 
-  private int[][] InitTmStatusGroup(int groupIdx, bool isUpdating)
+  private int[][] InitTmStatusGroup(int groupIdx, bool isUpdating, bool shouldThrowException)
   {
     var groupName = _scriptTask.GroupNames.ElementAtOrDefault(groupIdx);
     if (string.IsNullOrEmpty(groupName))
     {
-      throw new Exception($"Не найдена требуемая группа сигналов в конфигурации: {groupIdx}");
+      if (shouldThrowException)
+      {
+        throw new Exception($"Не найдена требуемая группа сигналов в конфигурации: {groupIdx}");
+      }
+      else
+      {
+        return null;
+      }
     }
     var tmStatuses = new List<TmStatus>();
     if (groupName.StartsWith("@"))
@@ -192,22 +203,41 @@ public class Worker : BackgroundService
 
   private int[][] InitTmStatusGroupInput(int idx)
   {
-    return InitTmStatusGroup(idx, isUpdating: true);
+    return InitTmStatusGroup(idx, isUpdating: true, shouldThrowException: true);
+  }
+
+
+  private int[][] TryInitTmStatusGroupInput(int idx)
+  {
+    return InitTmStatusGroup(idx, isUpdating: true, shouldThrowException: false);
   }
 
 
   private int[][] InitTmStatusGroupOutput(int idx)
   {
-    return InitTmStatusGroup(idx, isUpdating: false);
+    return InitTmStatusGroup(idx, isUpdating: false, shouldThrowException: true);
   }
 
 
-  private int[][] InitTmAnalogGroup(int groupIdx, bool isUpdating)
+  private int[][] TryInitTmStatusGroupOutput(int idx)
+  {
+    return InitTmStatusGroup(idx, isUpdating: false, shouldThrowException: false);
+  }
+
+
+  private int[][] InitTmAnalogGroup(int groupIdx, bool isUpdating, bool shouldThrowException)
   {
     var groupName = _scriptTask.GroupNames.ElementAtOrDefault(groupIdx);
     if (string.IsNullOrEmpty(groupName))
     {
-      throw new Exception($"Не найдена требуемая группа измерений в конфигурации: {groupIdx}");
+      if (shouldThrowException)
+      {
+        throw new Exception($"Не найдена требуемая группа измерений в конфигурации: {groupIdx}");
+      }
+      else
+      {
+        return null;
+      }
     }
 
     var tmAnalogs = new List<TmAnalog>();
@@ -255,13 +285,25 @@ public class Worker : BackgroundService
 
   private int[][] InitTmAnalogGroupInput(int idx)
   {
-    return InitTmAnalogGroup(idx, isUpdating: true);
+    return InitTmAnalogGroup(idx, isUpdating: true, shouldThrowException: true);
+  }
+
+
+  private int[][] TryInitTmAnalogGroupInput(int idx)
+  {
+    return InitTmAnalogGroup(idx, isUpdating: true, shouldThrowException: false);
   }
 
 
   private int[][] InitTmAnalogGroupOutput(int idx)
   {
-    return InitTmAnalogGroup(idx, isUpdating: false);
+    return InitTmAnalogGroup(idx, isUpdating: false, shouldThrowException: true);
+  }
+
+
+  private int[][] TryInitTmAnalogGroupOutput(int idx)
+  {
+    return InitTmAnalogGroup(idx, isUpdating: false, shouldThrowException: false);
   }
 
 
